@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firebase Security Prober</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, getDocs, getDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getStorage, ref, listAll } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+
+        // Global Firebase Configuration (from user input)
+        const firebaseConfig = {
+            apiKey: "AIzaSyDvBE5-77eZO8T18EiJ_MwGAYo5j2bqhbk",
+            authDomain: "holidayhack2025.firebaseapp.com",
+            projectId: "holidayhack2025",
+            storageBucket: "holidayhack2025.firebasestorage.app",
+            messagingSenderId: "341227752777",
+            appId: "1:341227752777:web:7b9017d3d2d83ccf481e98"
+        };
+
+        let app, auth, db, storage;
+        let userId = 'N/A';
+
+        // Utility function to log status messages
+        function log(message, type = 'info') {
+            const output = document.getElementById('output');
+            const color = type === 'success' ? 'text-green-500' :
+                          type === 'error' ? 'text-red-500' :
+                          'text-yellow-500';
+            output.innerHTML += `<div class="p-2 border-b border-gray-700 ${color}">${new Date().toLocaleTimeString()} - ${message}</div>`;
+            output.scrollTop = output.scrollHeight;
+        }
+
+        // 1. Initialization
+        async function initializeFirebase() {
+            try {
+                log('Initializing Firebase App...');
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                storage = getStorage(app);
+                log('Firebase services initialized.', 'success');
+
+                // Continuing as UNAUTHENTICATED
+                log('Skipping sign-in. Proceeding with UNAUTHENTICATED tests.', 'info');
+                userId = 'UNAUTHENTICATED';
+                
+                document.getElementById('status').textContent = `Status: ${userId}`;
+                document.getElementById('test-area').classList.remove('hidden');
+
+            } catch (error) {
+                log(`Initialization Failed: ${error.message}`, 'error');
+            }
+        }
+
+        // 2. Firestore Security Test (Attempt to read a general collection)
+        async function testFirestore() {
+            log('--- Testing Firestore (Public Collection Read) ---');
+            const collectionName = document.getElementById('firestore-collection').value.trim();
+
+            if (!collectionName) {
+                log('Please enter a collection name to test.', 'error');
+                return;
+            }
+            
+            try {
+                // Check public data path (common for shared artifacts)
+                const publicDataPath = `artifacts/${firebaseConfig.appId}/public/data/${collectionName}`;
+                const q = collection(db, publicDataPath);
+
+                log(`Attempting to read collection: /${publicDataPath}`);
+                const querySnapshot = await getDocs(q);
+
+                if (querySnapshot.empty) {
+                    log(`Collection '${collectionName}' is accessible but empty, or no documents matched. (Success)`);
+                } else {
+                    log(`SUCCESS! Found ${querySnapshot.size} documents in collection '${collectionName}'. Rules are likely open to UNAUTHENTICATED users!`, 'success');
+                    querySnapshot.docs.slice(0, 3).forEach((doc) => {
+                        log(`- Document ID: ${doc.id}, Data Preview: ${JSON.stringify(doc.data()).substring(0, 100)}...`);
+                    });
+                }
+            } catch (error) {
+                log(`Firestore Read Failed: ${error.message}`, 'error');
+            }
+        }
+        
+        // Recursive helper function for storage listing
+        async function recursiveList(path, depth) {
+            // Set a safe maximum depth to prevent excessive queries
+            if (depth > 3) { 
+                log(`Max depth reached. Stopping recursion at: ${path}`, 'info');
+                return;
+            }
+
+            const listRef = ref(storage, path);
+            log(`[${depth}] Listing: gs://${firebaseConfig.storageBucket}/${path.slice(0)}`);
+
+            try {
+                const result = await listAll(listRef);
+
+                // Log files (items)
+                result.items.forEach(itemRef => {
+                    log(`  [FILE] ${itemRef.fullPath}`, 'success');
+                });
+
+                // Recurse into folders (prefixes)
+                for (const prefixRef of result.prefixes) {
+                    await recursiveList(prefixRef.fullPath, depth + 1);
+                }
+
+                if (result.items.length === 0 && result.prefixes.length === 0 && depth === 0) {
+                    log('Storage listing succeeded but found no items.', 'info');
+                }
+
+            } catch (error) {
+                // If listing fails for a specific path, log the error but continue to other prefixes
+                log(`[${depth}] FAILED to list path ${path}: ${error.message}`, 'error');
+            }
+        }
+
+        // 3. Storage Security Test (Attempt recursive listing)
+        async function probeStorage() {
+            log('--- Testing Storage (Recursive Listing) ---');
+            try {
+                await recursiveList('/', 0);
+            } catch (error) {
+                log(`Storage Probe Failed: ${error.message}`, 'error');
+            }
+        }
+
+
+        window.onload = initializeFirebase;
+        window.testFirestore = testFirestore;
+        window.probeStorage = probeStorage; // Updated name
+
+    </script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen p-8 font-sans">
+
+    <div class="max-w-4xl mx-auto bg-gray-800 p-6 rounded-xl shadow-2xl">
+        <h1 class="text-3xl font-bold text-red-400 mb-4 border-b pb-2 border-red-700">
+            [HOLIDAY HACK] Firebase Prober
+        </h1>
+        
+        <div class="flex justify-between items-center mb-6 p-3 bg-gray-700 rounded-lg">
+            <p class="text-lg font-mono">Project ID: <span class="text-white">holidayhack2025</span></p>
+            <p id="status" class="text-sm font-semibold text-yellow-300">Initialized as UNAUTHENTICATED</p>
+        </div>
+
+        <!-- Testing Area -->
+        <div id="test-area" class="space-y-6 hidden">
+            
+            <h2 class="text-xl font-semibold text-blue-400">1. Probe Firestore (Database)</h2>
+            <div class="p-4 bg-gray-700 rounded-lg">
+                <p class="text-sm text-gray-300 mb-2">The default path to test for public data is `artifacts/&lt;appId&gt;/public/data/&lt;collectionName&gt;`. Enter a likely collection name (e.g., `users`, `clues`, `config`, `messages`).</p>
+                <div class="flex space-x-3">
+                    <input type="text" id="firestore-collection" value="clues" placeholder="Enter collection name (e.g., clues)" 
+                           class="flex-grow p-2 rounded bg-gray-600 border border-gray-500 focus:ring-red-400 focus:border-red-400 text-white">
+                    <button onclick="testFirestore()" 
+                            class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition duration-200 shadow-md">
+                        Test Firestore Read
+                    </button>
+                </div>
+            </div>
+
+            <h2 class="text-xl font-semibold text-blue-400">2. Probe Storage (Files) - Recursive</h2>
+            <div class="p-4 bg-gray-700 rounded-lg">
+                <p class="text-sm text-gray-300 mb-2">This now performs a recursive search across all directories in the bucket, like `ls -R`.</p>
+                <button onclick="probeStorage()" 
+                        class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition duration-200 shadow-md">
+                    Test Storage Listing (Recursive)
+                </button>
+            </div>
+            
+        </div>
+
+        <!-- Output Log -->
+        <h2 class="text-xl font-semibold text-green-400 mt-8 mb-4 border-t pt-4 border-gray-700">Activity Log</h2>
+        <div id="output" class="h-64 overflow-y-scroll bg-gray-900 border border-gray-600 rounded-lg p-2 text-sm font-mono whitespace-pre-wrap">
+            <!-- Log messages will appear here -->
+        </div>
+
+    </div>
+
+</body>
+</html>
